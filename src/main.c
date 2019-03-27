@@ -1,16 +1,16 @@
 
-#include <windows.h>
-#include <vlc/vlc.h>
-#include <wincodec.h>
-#include <commdlg.h>
-
 #define COBJMACROS
+#include <windows.h>
+//#include <commdlg.h>
+//#include <Unknwnbase.h>
+#include <Unknwn.h>
+#include <wincodec.h>
 #include <d2d1.h>
-#include <d2d1effects.h>
+#include <d2d1helper.h>
 
 #define NK_IMPLEMENTATION
 #include "nuklear.h"
-
+#include <vlc/vlc.h>
 //template <typename T>
 //inline void SAFE_RELEASE(T *&p)
 //{
@@ -20,9 +20,9 @@
 //	}
 //}
 
+#pragma warning(disable:4995 )
 
-
-static IWICImagingFactory *wic_factory;
+static IWICImagingFactory *wic_imaging_factory;
 static ID2D1Factory *d2d_factory;
 
 static ID2D1HwndRenderTarget *hwnd_render_target;
@@ -30,9 +30,13 @@ static ID2D1Bitmap *d2d_bitmap;
 static IWICFormatConverter *converted_bitmap_source;
 
 static const float DEFAULT_DPI = 96.f;
+static const D2D1_COLOR_F D2D1_COLOR_F_WHITE = { 1.f, 1.f, 1.f, 1.f };
+static const D2D1_MATRIX_3X2_F D2D1_MATRIX_3X2_F_IDENTITY = { 1.f, 0.f, 0.f, 1.f, 0.f, 0.f };
+
 
 #define COUNT_OF(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
 #define SAFE_RELEASE(X) if ((X)) { IUnknown_Release(((IUnknown*)(X))); X = NULL; }
+
 //int main()
 //{
 	//libvlc_instance_t *vlc_instance;
@@ -68,7 +72,7 @@ HRESULT InitializeFactory(HINSTANCE hinstance)
 	HRESULT hr = S_OK;
 
 	// Create WIC Factory
-	hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, NULL, IID_PPV_ARGS(&wic_factory));
+	hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &wic_imaging_factory);
 
 	if (SUCCEEDED(hr)) {
 		hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &IID_ID2D1Factory, NULL, &d2d_factory);
@@ -113,20 +117,25 @@ HRESULT CreateDeviceResources(HWND hwnd)
 		hr = GetClientRect(hwnd, &rc) ? S_OK : E_FAIL;
 
 		if (SUCCEEDED(hr)) {
-			D2D1_RENDER_TARGET_PROPERTIES render_target_properties;
-			// auto render_target_properties = D2D1::RenderTargetProperties();
-
 			// Set the DPI to be the default system DPI to allow direct mapping
 			// between image pixels and desktop pixels in different system DPI settings
-			render_target_properties.dpiX = DEFAULT_DPI;
-			render_target_properties.dpiY = DEFAULT_DPI;
+			D2D1_PIXEL_FORMAT pixel_format = { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN };
+			D2D1_RENDER_TARGET_PROPERTIES render_target_properties = {
+				D2D1_RENDER_TARGET_TYPE_DEFAULT,
+				pixel_format,
+				DEFAULT_DPI,
+				DEFAULT_DPI,
+				D2D1_RENDER_TARGET_USAGE_NONE,
+				D2D1_FEATURE_LEVEL_DEFAULT,
+			};
+			// auto render_target_properties = D2D1::RenderTargetProperties();
 
 			D2D1_SIZE_U size = { rc.right - rc.left, rc.bottom - rc.top };
 
-			D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rtp = { hwnd, size };
+			D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rtp = { hwnd, size, D2D1_PRESENT_OPTIONS_NONE };
 
 			
-			hr = d2d_factory->lpVtbl->CreateHwndRenderTarget(d2d_factory, &render_target_properties, &hwnd_rtp, &hwnd_render_target);
+			hr = ID2D1Factory_CreateHwndRenderTarget(d2d_factory, &render_target_properties, &hwnd_rtp, &hwnd_render_target);
 		}
 	}
 	return hr;
@@ -145,22 +154,22 @@ HRESULT CreateD2DBitmapFromFile(HWND hwnd)
 	if (SUCCEEDED(hr)) {
 		// 2. decode the source image
 		IWICBitmapDecoder *decoder = NULL;
-		hr = wic_factory->lpVtbl->CreateDecoderFromFilename(wic_factory, file_name, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+		hr = IWICImagingFactory_CreateDecoderFromFilename(wic_imaging_factory, file_name, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
 		IWICBitmapFrameDecode *frame = NULL;
 		if (SUCCEEDED(hr)) {
-			hr = decoder->lpVtbl->GetFrame(decoder, 0, &frame);
+			hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
 		}
 
 		// 3. format convert the frame to 32bpPBGRA
 		if (SUCCEEDED(hr)) {
 			SAFE_RELEASE(converted_bitmap_source);
-			hr = wic_factory->lpVtbl->CreateFormatConverter(wic_factory, &converted_bitmap_source);
+			hr = IWICImagingFactory_CreateFormatConverter(wic_imaging_factory, &converted_bitmap_source);
 		}
 
 		if (SUCCEEDED(hr)) {
-			hr = converted_bitmap_source->lpVtbl->Initialize(
+			hr = IWICFormatConverter_Initialize(
 				converted_bitmap_source,
-				frame,                           // Input bitmap to convert
+				(IWICBitmapSource *)frame,                           // Input bitmap to convert
 				&GUID_WICPixelFormat32bppPBGRA,   // Destination pixel format
 				WICBitmapDitherTypeNone,         // Specified dither pattern
 				NULL,                         // Specify a particular palette 
@@ -175,7 +184,7 @@ HRESULT CreateD2DBitmapFromFile(HWND hwnd)
 		}
 		if (SUCCEEDED(hr)) {
 			SAFE_RELEASE(d2d_bitmap);
-			ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(hwnd_render_target, converted_bitmap_source, NULL, &d2d_bitmap);
+			ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(hwnd_render_target, (IWICBitmapSource *)converted_bitmap_source, NULL, &d2d_bitmap);
 		}
 
 		SAFE_RELEASE(decoder);
@@ -196,16 +205,15 @@ LRESULT RenderView(HWND hwnd)
 		hr = CreateDeviceResources(hwnd);
 		if (SUCCEEDED(hr) && !(ID2D1HwndRenderTarget_CheckWindowState(hwnd_render_target) & D2D1_WINDOW_STATE_OCCLUDED)) {
 			ID2D1HwndRenderTarget_BeginDraw(hwnd_render_target);
-			ID2D1HwndRenderTarget_SetTransform(hwnd_render_target, IdentityMatrix())
-			//hwnd_render_target->SetTransform(D2D1::Matrix3x2F::Identity());
-			ID2D1HwndRenderTarget_Clear(hwnd_render_target, D2D1_COLOR_F);
+			ID2D1HwndRenderTarget_SetTransform(hwnd_render_target, &D2D1_MATRIX_3X2_F_IDENTITY);
+			ID2D1HwndRenderTarget_Clear(hwnd_render_target, &D2D1_COLOR_F_WHITE);
 			D2D1_SIZE_F rt_size = ID2D1HwndRenderTarget_GetSize(hwnd_render_target);
 			D2D_RECT_F rectangle = { 0.f, 0.f, rt_size.width, rt_size.height };
 			
 			// D2DBitmap may have been released due to device loss. 
 			// If so, re-create it from the source bitmap
 			if (converted_bitmap_source && !d2d_bitmap) {
-				ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(hwnd_render_target, converted_bitmap_source, NULL, &d2d_bitmap);
+				ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(hwnd_render_target, (IWICBitmapSource *)converted_bitmap_source, NULL, &d2d_bitmap);
 			}
 			if (d2d_bitmap) {
 				ID2D1HwndRenderTarget_DrawBitmap(hwnd_render_target, d2d_bitmap, &rectangle, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
@@ -218,7 +226,7 @@ LRESULT RenderView(HWND hwnd)
 				SAFE_RELEASE(d2d_bitmap);
 				SAFE_RELEASE(hwnd_render_target);
 				// force a re-render
-				hr = InvalidateRect(hwnd, nullptr, TRUE) ? S_OK : E_FAIL;
+				hr = InvalidateRect(hwnd, NULL, TRUE) ? S_OK : E_FAIL;
 			}
 		}
 		EndPaint(hwnd, &ps);
@@ -238,11 +246,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			break;
 		}
 		case WM_SIZE: {
-			auto size = D2D1::SizeU(LOWORD(lParam), HIWORD(lParam));
+			D2D1_SIZE_U size = { LOWORD(lParam), HIWORD(lParam) };
 			if (hwnd_render_target) {
 				// If we couldn't resize, release the device and we'll recreate it
 				// during the next render pass.
-				if (FAILED(hwnd_render_target->Resize(size))) {
+				if (FAILED(ID2D1HwndRenderTarget_Resize(hwnd_render_target, &size))) {
 					SAFE_RELEASE(hwnd_render_target);
 					SAFE_RELEASE(d2d_bitmap);
 				}
@@ -302,9 +310,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPreInstance, PWSTR pCmdLine,
 	UNREFERENCED_PARAMETER(pCmdLine);
 	UNREFERENCED_PARAMETER(nCmdShow);
 
-	HeapSetInformation(nullptr, HeapEnableTerminationOnCorruption, nullptr, 0);
+	HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 
-	HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
 	if (SUCCEEDED(hr)) {
 		hr = InitializeFactory(hInstance);
@@ -323,7 +331,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPreInstance, PWSTR pCmdLine,
 	}
 
 
-	SAFE_RELEASE(wic_factory);
+	SAFE_RELEASE(wic_imaging_factory);
 	SAFE_RELEASE(d2d_factory);
 	SAFE_RELEASE(hwnd_render_target);
 	SAFE_RELEASE(d2d_bitmap);
