@@ -128,11 +128,13 @@ static
 HRESULT CreateDeviceResources(HWND hwnd)
 {
 	HRESULT hr = S_OK;
-	if (!d2d_app.hwnd_render_target) {
-		RECT rc;
-		hr = GetClientRect(hwnd, &rc) ? S_OK : E_FAIL;
+	RECT rc;
+	if (!GetClientRect(hwnd, &rc)) {
+		hr = HRESULT_FROM_WIN32(GetLastError());
+	}
+	if (SUCCEEDED(hr)) {
 
-		if (SUCCEEDED(hr)) {
+		if (!d2d_app.hwnd_render_target) {
 			// Set the DPI to be the default system DPI to allow direct mapping
 			// between image pixels and desktop pixels in different system DPI settings
 			D2D1_PIXEL_FORMAT pixel_format = { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN };
@@ -148,10 +150,14 @@ HRESULT CreateDeviceResources(HWND hwnd)
 
 			D2D1_SIZE_U size = { rc.right - rc.left, rc.bottom - rc.top };
 
-			D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rtp = { hwnd, size, D2D1_PRESENT_OPTIONS_NONE };
+			D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rtp = { hwnd, size, D2D1_PRESENT_OPTIONS_IMMEDIATELY };
 
 			
 			hr = ID2D1Factory_CreateHwndRenderTarget(d2d_app.d2d_factory, &render_target_properties, &hwnd_rtp, &d2d_app.hwnd_render_target);
+		}
+		else {
+			D2D1_SIZE_U size = { rc.right - rc.left, rc.bottom - rc.top };
+			ID2D1HwndRenderTarget_Resize(d2d_app.hwnd_render_target, &size);
 		}
 	}
 	return hr;
@@ -289,9 +295,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 					SAFE_RELEASE(d2d_app.hwnd_render_target);
 					SAFE_RELEASE(d2d_app.d2d_bitmap);
 				}
+				RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
 			}
 			break;
 		}
+
 		case WM_PAINT: {
 			return RenderView(hwnd);
 		}
