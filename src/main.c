@@ -8,25 +8,14 @@
 #include <d2d1.h>
 #include <d2d1helper.h>
 
-#define NK_IMPLEMENTATION
-#include "nuklear.h"
-#include <vlc/vlc.h>
-//template <typename T>
-//inline void SAFE_RELEASE(T *&p)
-//{
-//	if (nullptr != p) {
-//		p->Release();
-//		p = nullptr;
-//	}
-//}
-
-//#pragma warning(disable:4995 )
+//#define NK_IMPLEMENTATION
+//#include "nuklear.h"
+//#include <vlc/vlc.h>
 
 
 static const float DEFAULT_DPI = 96.f;
 static const D2D1_COLOR_F D2D1_COLOR_F_WHITE = { 1.f, 1.f, 1.f, 1.f };
 static const D2D1_MATRIX_3X2_F D2D1_MATRIX_3X2_F_IDENTITY = { 1.f, 0.f, 0.f, 1.f, 0.f, 0.f };
-
 
 #define COUNT_OF(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
 #define SAFE_RELEASE(X) if ((X)) { IUnknown_Release(((IUnknown*)(X))); X = NULL; }
@@ -37,21 +26,24 @@ static const D2D1_MATRIX_3X2_F D2D1_MATRIX_3X2_F_IDENTITY = { 1.f, 0.f, 0.f, 1.f
 #define MIN_WINDOW_HEIGHT 240
 
 static struct {
-	ID2D1Factory *d2d_factory;
-	ID2D1HwndRenderTarget *hwnd_render_target;
-	ID2D1Bitmap *d2d_bitmap;
 	unsigned int width;
 	unsigned int height;
 	unsigned int min_width;
 	unsigned int min_height;
-} d2d_app;
+} tine_app;
+
+static struct {
+	ID2D1Factory *d2d_factory;
+	ID2D1HwndRenderTarget *hwnd_render_target;
+	ID2D1Bitmap *d2d_bitmap;
+} d2d_res;
 
 static struct {
 	IWICImagingFactory *wic_imaging_factory;
 	IWICFormatConverter *converted_bitmap_source;
 	unsigned int image_width;
 	unsigned int image_height;
-} wic;
+} wic_res;
 
 //int main()
 //{
@@ -88,10 +80,10 @@ HRESULT InitializeFactory(HINSTANCE hinstance)
 	HRESULT hr = S_OK;
 
 	// Create WIC Factory
-	hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &wic.wic_imaging_factory);
+	hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &wic_res.wic_imaging_factory);
 
 	if (SUCCEEDED(hr)) {
-		hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &IID_ID2D1Factory, NULL, &d2d_app.d2d_factory);
+		hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &IID_ID2D1Factory, NULL, &d2d_res.d2d_factory);
 	}
 
 	return hr;
@@ -134,7 +126,7 @@ HRESULT CreateDeviceResources(HWND hwnd)
 	}
 	if (SUCCEEDED(hr)) {
 
-		if (!d2d_app.hwnd_render_target) {
+		if (!d2d_res.hwnd_render_target) {
 			// Set the DPI to be the default system DPI to allow direct mapping
 			// between image pixels and desktop pixels in different system DPI settings
 			D2D1_PIXEL_FORMAT pixel_format = { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN };
@@ -153,11 +145,11 @@ HRESULT CreateDeviceResources(HWND hwnd)
 			D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rtp = { hwnd, size, D2D1_PRESENT_OPTIONS_IMMEDIATELY };
 
 			
-			hr = ID2D1Factory_CreateHwndRenderTarget(d2d_app.d2d_factory, &render_target_properties, &hwnd_rtp, &d2d_app.hwnd_render_target);
+			hr = ID2D1Factory_CreateHwndRenderTarget(d2d_res.d2d_factory, &render_target_properties, &hwnd_rtp, &d2d_res.hwnd_render_target);
 		}
 		else {
 			D2D1_SIZE_U size = { rc.right - rc.left, rc.bottom - rc.top };
-			ID2D1HwndRenderTarget_Resize(d2d_app.hwnd_render_target, &size);
+			ID2D1HwndRenderTarget_Resize(d2d_res.hwnd_render_target, &size);
 		}
 	}
 	return hr;
@@ -176,7 +168,7 @@ HRESULT CreateD2DBitmapFromFile(HWND hwnd)
 	if (SUCCEEDED(hr)) {
 		// 2. decode the source image
 		IWICBitmapDecoder *decoder = NULL;
-		hr = IWICImagingFactory_CreateDecoderFromFilename(wic.wic_imaging_factory, file_name, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+		hr = IWICImagingFactory_CreateDecoderFromFilename(wic_res.wic_imaging_factory, file_name, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
 		IWICBitmapFrameDecode *frame = NULL;
 		if (SUCCEEDED(hr)) {
 			hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
@@ -184,14 +176,14 @@ HRESULT CreateD2DBitmapFromFile(HWND hwnd)
 
 		// 3. format convert the frame to 32bpPBGRA
 		if (SUCCEEDED(hr)) {
-			IWICBitmapFrameDecode_GetSize(frame, &wic.image_width, &wic.image_height);
-			SAFE_RELEASE(wic.converted_bitmap_source);
-			hr = IWICImagingFactory_CreateFormatConverter(wic.wic_imaging_factory, &wic.converted_bitmap_source);
+			IWICBitmapFrameDecode_GetSize(frame, &wic_res.image_width, &wic_res.image_height);
+			SAFE_RELEASE(wic_res.converted_bitmap_source);
+			hr = IWICImagingFactory_CreateFormatConverter(wic_res.wic_imaging_factory, &wic_res.converted_bitmap_source);
 		}
 
 		if (SUCCEEDED(hr)) {
 			hr = IWICFormatConverter_Initialize(
-				wic.converted_bitmap_source,
+				wic_res.converted_bitmap_source,
 				(IWICBitmapSource *)frame,                           // Input bitmap to convert
 				&GUID_WICPixelFormat32bppPBGRA,   // Destination pixel format
 				WICBitmapDitherTypeNone,         // Specified dither pattern
@@ -206,8 +198,8 @@ HRESULT CreateD2DBitmapFromFile(HWND hwnd)
 			hr = CreateDeviceResources(hwnd);
 		}
 		if (SUCCEEDED(hr)) {
-			SAFE_RELEASE(d2d_app.d2d_bitmap);
-			ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(d2d_app.hwnd_render_target, (IWICBitmapSource *)wic.converted_bitmap_source, NULL, &d2d_app.d2d_bitmap);
+			SAFE_RELEASE(d2d_res.d2d_bitmap);
+			ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(d2d_res.hwnd_render_target, (IWICBitmapSource *)wic_res.converted_bitmap_source, NULL, &d2d_res.d2d_bitmap);
 		}
 
 		SAFE_RELEASE(decoder);
@@ -226,44 +218,44 @@ LRESULT RenderView(HWND hwnd)
 
 	if (BeginPaint(hwnd, &ps)) {
 		hr = CreateDeviceResources(hwnd);
-		if (SUCCEEDED(hr) && !(ID2D1HwndRenderTarget_CheckWindowState(d2d_app.hwnd_render_target) & D2D1_WINDOW_STATE_OCCLUDED)) {
-			ID2D1HwndRenderTarget_BeginDraw(d2d_app.hwnd_render_target);
-			ID2D1HwndRenderTarget_SetTransform(d2d_app.hwnd_render_target, &D2D1_MATRIX_3X2_F_IDENTITY);
-			ID2D1HwndRenderTarget_Clear(d2d_app.hwnd_render_target, &D2D1_COLOR_F_WHITE);
-			// D2D1_SIZE_F rt_size = ID2D1HwndRenderTarget_GetSize(d2d_app.hwnd_render_target);
+		if (SUCCEEDED(hr) && !(ID2D1HwndRenderTarget_CheckWindowState(d2d_res.hwnd_render_target) & D2D1_WINDOW_STATE_OCCLUDED)) {
+			ID2D1HwndRenderTarget_BeginDraw(d2d_res.hwnd_render_target);
+			ID2D1HwndRenderTarget_SetTransform(d2d_res.hwnd_render_target, &D2D1_MATRIX_3X2_F_IDENTITY);
+			ID2D1HwndRenderTarget_Clear(d2d_res.hwnd_render_target, &D2D1_COLOR_F_WHITE);
+			// D2D1_SIZE_F rt_size = ID2D1HwndRenderTarget_GetSize(d2d_res.hwnd_render_target);
 
 			
 			// D2DBitmap may have been released due to device loss. 
 			// If so, re-create it from the source bitmap
-			if (wic.converted_bitmap_source && !d2d_app.d2d_bitmap) {
-				ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(d2d_app.hwnd_render_target, (IWICBitmapSource *)wic.converted_bitmap_source, NULL, &d2d_app.d2d_bitmap);
+			if (wic_res.converted_bitmap_source && !d2d_res.d2d_bitmap) {
+				ID2D1HwndRenderTarget_CreateBitmapFromWicBitmap(d2d_res.hwnd_render_target, (IWICBitmapSource *)wic_res.converted_bitmap_source, NULL, &d2d_res.d2d_bitmap);
 			}
-			if (d2d_app.d2d_bitmap) {
-				D2D1_SIZE_F resize = { wic.image_width, wic.image_height };
+			if (d2d_res.d2d_bitmap) {
+				D2D1_SIZE_F resize = { wic_res.image_width, wic_res.image_height };
 
 				float _ratio = resize.width / resize.height;
 
-				resize.width = resize.width < d2d_app.width ? resize.width : d2d_app.width;
+				resize.width = resize.width < tine_app.width ? resize.width : tine_app.width;
 				resize.height = resize.width / _ratio;
-				resize.height = resize.height < d2d_app.height ? resize.height : d2d_app.height;
+				resize.height = resize.height < tine_app.height ? resize.height : tine_app.height;
 				resize.width = resize.height * _ratio;
 
-				float _left = 0.5f*(d2d_app.width - resize.width);
-				float _top = 0.5f*(d2d_app.height - resize.height);
+				float _left = 0.5f*(tine_app.width - resize.width);
+				float _top = 0.5f*(tine_app.height - resize.height);
 				float _right = _left + resize.width;
 				float _bottom = _top + resize.height;
 
 				D2D_RECT_F rectangle = { _left, _top, _right, _bottom};
 
-				ID2D1HwndRenderTarget_DrawBitmap(d2d_app.hwnd_render_target, d2d_app.d2d_bitmap, &rectangle, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
+				ID2D1HwndRenderTarget_DrawBitmap(d2d_res.hwnd_render_target, d2d_res.d2d_bitmap, &rectangle, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
 			}
-			hr = ID2D1HwndRenderTarget_EndDraw(d2d_app.hwnd_render_target, NULL, NULL);
+			hr = ID2D1HwndRenderTarget_EndDraw(d2d_res.hwnd_render_target, NULL, NULL);
 
 			// In case of device loss, discard D2D render target and D2DBitmap
 			// They will be re-created in the next rendering pass
 			if (hr == D2DERR_RECREATE_TARGET) {
-				SAFE_RELEASE(d2d_app.d2d_bitmap);
-				SAFE_RELEASE(d2d_app.hwnd_render_target);
+				SAFE_RELEASE(d2d_res.d2d_bitmap);
+				SAFE_RELEASE(d2d_res.hwnd_render_target);
 				// force a re-render
 				hr = InvalidateRect(hwnd, NULL, TRUE) ? S_OK : E_FAIL;
 			}
@@ -286,16 +278,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		}
 		case WM_SIZE: {
 			D2D1_SIZE_U size = { LOWORD(lParam), HIWORD(lParam) };
-			if (d2d_app.hwnd_render_target) {
+			if (d2d_res.hwnd_render_target) {
 				// If we couldn't resize, release the device and we'll recreate it
 				// during the next render pass.
-				d2d_app.width = size.width;
-				d2d_app.height = size.height;
-				if (FAILED(ID2D1HwndRenderTarget_Resize(d2d_app.hwnd_render_target, &size))) {
-					SAFE_RELEASE(d2d_app.hwnd_render_target);
-					SAFE_RELEASE(d2d_app.d2d_bitmap);
+				tine_app.width = size.width;
+				tine_app.height = size.height;
+				if (FAILED(ID2D1HwndRenderTarget_Resize(d2d_res.hwnd_render_target, &size))) {
+					SAFE_RELEASE(d2d_res.hwnd_render_target);
+					SAFE_RELEASE(d2d_res.d2d_bitmap);
 				}
-				RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+				InvalidateRect(hwnd, NULL, FALSE);
 			}
 			break;
 		}
@@ -305,8 +297,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		}
 		case WM_GETMINMAXINFO: {
 			MINMAXINFO *min_max_info = (PMINMAXINFO)lParam;
-			min_max_info->ptMinTrackSize.x = d2d_app.min_width;
-			min_max_info->ptMinTrackSize.y = d2d_app.min_height;
+			min_max_info->ptMinTrackSize.x = tine_app.min_width;
+			min_max_info->ptMinTrackSize.y = tine_app.min_height;
 			break;
 		}
 		case WM_DESTROY: {
@@ -325,13 +317,13 @@ HRESULT InitializeWindow(HINSTANCE hInstance)
 	HRESULT hr = S_OK;
 
 	const wchar_t CLASS_NAME[] = L"Tine Base Window Class";
-	d2d_app.width = WINDOW_WIDTH;
-	d2d_app.height = WINDOW_HEIGHT;
-	d2d_app.min_width = MIN_WINDOW_WIDTH;
-	d2d_app.min_height = MIN_WINDOW_HEIGHT;
+	tine_app.width = WINDOW_WIDTH;
+	tine_app.height = WINDOW_HEIGHT;
+	tine_app.min_width = MIN_WINDOW_WIDTH;
+	tine_app.min_height = MIN_WINDOW_HEIGHT;
 
 	WNDCLASS wc = { 0 };
-	RECT rc = { 0, 0, d2d_app.width, d2d_app.height };
+	RECT rc = { 0, 0, tine_app.width, tine_app.height };
 	DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	DWORD exstyle = WS_EX_APPWINDOW;
 
@@ -349,7 +341,7 @@ HRESULT InitializeWindow(HINSTANCE hInstance)
 		CLASS_NAME,
 		L"Tine",
 		style,
-		CW_USEDEFAULT, CW_USEDEFAULT, d2d_app.width, d2d_app.height,
+		CW_USEDEFAULT, CW_USEDEFAULT, tine_app.width, tine_app.height,
 		NULL,
 		NULL,
 		hInstance,
@@ -390,11 +382,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPreInstance, PWSTR pCmdLine,
 	}
 
 
-	SAFE_RELEASE(wic.wic_imaging_factory);
-	SAFE_RELEASE(d2d_app.d2d_factory);
-	SAFE_RELEASE(d2d_app.hwnd_render_target);
-	SAFE_RELEASE(d2d_app.d2d_bitmap);
-	SAFE_RELEASE(wic.converted_bitmap_source);
+	SAFE_RELEASE(wic_res.wic_imaging_factory);
+	SAFE_RELEASE(d2d_res.d2d_factory);
+	SAFE_RELEASE(d2d_res.hwnd_render_target);
+	SAFE_RELEASE(d2d_res.d2d_bitmap);
+	SAFE_RELEASE(wic_res.converted_bitmap_source);
 
 	return 0;
 }
